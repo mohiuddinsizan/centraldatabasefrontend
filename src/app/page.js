@@ -29,8 +29,14 @@ function fmt(n) {
 function getImageUrl(url) {
   if (!url) return null;
   if (url.startsWith('http')) return url;
-  return `http://localhost:5000${url}`;
+
+  const base =
+    process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') ||
+    'http://localhost:5000';
+
+  return `${base}${url}`;
 }
+
 
 function BookCover({ archive }) {
   const st = CLASS_STYLES[archive.class] || CLASS_STYLES['Uncategorized'];
