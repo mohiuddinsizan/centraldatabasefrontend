@@ -8,11 +8,11 @@ import api from '@/lib/api';
 import {
   Plus, Trash2, Eye, EyeOff, Check, X,
   Image as ImageIcon, AlertCircle, Loader2,
-  ChevronDown, ChevronUp, GripVertical,
+  ChevronDown, ChevronUp, GripVertical, Video,
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FIX #3 — KaTeX singleton loader
+// KaTeX singleton loader
 // ─────────────────────────────────────────────────────────────────────────────
 let katexReady = false;
 let katexPromise = null;
@@ -40,7 +40,6 @@ const loadKaTeX = () => {
   return katexPromise;
 };
 
-// FIX #3 — shared hook so every LatexPreview reuses the same promise
 const useKaTeX = () => {
   const [ready, setReady] = useState(katexReady);
   useEffect(() => {
@@ -50,12 +49,28 @@ const useKaTeX = () => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FIX #7 — payload utility: strip undefined/null fields recursively
+// payload utility: strip undefined/null fields recursively
 // ─────────────────────────────────────────────────────────────────────────────
 const cleanPayload = (obj) => JSON.parse(JSON.stringify(obj, (_, v) => (v == null ? undefined : v)));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FIX #8 — Draft persistence helpers
+// Video helpers
+// ─────────────────────────────────────────────────────────────────────────────
+const getYouTubeId = (url) => {
+  if (!url) return null;
+  const m = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/))([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+};
+const detectPlatform = (url) => {
+  if (!url) return undefined;
+  if (getYouTubeId(url)) return 'youtube';
+  if (/vimeo\.com/.test(url)) return 'vimeo';
+  if (/facebook\.com|fb\.watch/.test(url)) return 'facebook';
+  return 'other';
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Draft persistence helpers
 // ─────────────────────────────────────────────────────────────────────────────
 const DRAFT_KEY = 'upload-question-draft';
 const saveDraft = (state) => {
@@ -77,8 +92,14 @@ const defaultSubQ       = () => ({
 });
 const defaultWrittenPart = () => ({ questionText: '', questionImages: [], answerText: '', answerImages: [] });
 
+// Normalize sources to [{ sourceId, yearId }] (tolerates legacy string[] drafts)
+const normalizeSelectedSources = (arr) =>
+  (Array.isArray(arr) ? arr : []).map((s) =>
+    typeof s === 'string' ? { sourceId: s, yearId: null } : { sourceId: s.sourceId, yearId: s.yearId ?? null }
+  );
+
 // ─────────────────────────────────────────────────────────────────────────────
-// LatexPreview — FIX #3 (useKaTeX hook) + FIX #4 (textContent then render)
+// LatexPreview
 // ─────────────────────────────────────────────────────────────────────────────
 const LatexPreview = memo(function LatexPreview({ text }) {
   const ref   = useRef(null);
@@ -86,7 +107,6 @@ const LatexPreview = memo(function LatexPreview({ text }) {
 
   useEffect(() => {
     if (!ready || !ref.current) return;
-    // FIX #4 — set textContent first (safe), then let KaTeX parse
     ref.current.textContent = text || '';
     try {
       if (window.renderMathInElement) {
@@ -167,7 +187,70 @@ const ImageUploader = memo(function ImageUploader({ images, onChange }) {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RichField — FIX #6 (memo)
+// VideoLinksEditor — optional video links with YouTube thumbnail preview
+// ─────────────────────────────────────────────────────────────────────────────
+const VideoLinksEditor = memo(function VideoLinksEditor({ links, onChange }) {
+  const add    = () => onChange([...links, { url: '', label: '' }]);
+  const update = (i, patch) => onChange(links.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  const remove = (i) => onChange(links.filter((_, idx) => idx !== i));
+
+  return (
+    <div className="space-y-3">
+      {links.length === 0 && (
+        <p className="text-xs text-gray-400">No video links yet. Add a YouTube (or any) link to attach a solution video.</p>
+      )}
+      {links.map((link, i) => {
+        const ytId = getYouTubeId(link.url);
+        return (
+          <div key={i} className="flex items-start gap-3 p-3 bg-gray-50 border border-gray-200 rounded-xl">
+            {ytId ? (
+              <a href={link.url} target="_blank" rel="noreferrer" className="shrink-0">
+                <img
+                  src={`https://img.youtube.com/vi/${ytId}/mqdefault.jpg`}
+                  alt="video thumbnail"
+                  className="w-28 h-16 object-cover rounded-lg border border-gray-200"
+                />
+              </a>
+            ) : (
+              <div className="w-28 h-16 rounded-lg border border-dashed border-gray-300 flex items-center justify-center text-gray-300 shrink-0">
+                <Video className="w-5 h-5" />
+              </div>
+            )}
+            <div className="flex-1 space-y-2 min-w-0">
+              <input
+                type="url"
+                value={link.url}
+                onChange={(e) => update(i, { url: e.target.value })}
+                placeholder="Paste video URL (YouTube, Vimeo, etc.)"
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
+              />
+              <input
+                type="text"
+                value={link.label}
+                onChange={(e) => update(i, { label: e.target.value })}
+                placeholder="Label (e.g. Full solution) — optional"
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
+              />
+            </div>
+            <button type="button" onClick={() => remove(i)} className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg shrink-0">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        );
+      })}
+      <button
+        type="button"
+        onClick={add}
+        className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-gray-300 hover:border-violet-400 rounded-xl text-sm text-gray-500 hover:text-violet-600 w-full justify-center transition-colors"
+      >
+        <Plus className="w-4 h-4" /> Add video link
+      </button>
+    </div>
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RichField
 // ─────────────────────────────────────────────────────────────────────────────
 const RichField = memo(function RichField({
   label, value, onChange, images, onImagesChange,
@@ -221,36 +304,46 @@ const RichField = memo(function RichField({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MultiSelect — modal with search + create
+// MultiSelect — modal with search + (optional, persisted) create
+// Pass `onCreate(name) => Promise<{id,name}>` to enable creating new items.
+// Without onCreate, the create option is hidden (selection only).
 // ─────────────────────────────────────────────────────────────────────────────
-function MultiSelect({ label, options, selected, onChange, valueKey = 'id', labelKey = 'name' }) {
+function MultiSelect({ label, options, selected, onChange, valueKey = 'id', labelKey = 'name', onCreate }) {
   const [open, setOpen]               = useState(false);
   const [query, setQuery]             = useState('');
+  const [creating, setCreating]       = useState(false);
   const [localOptions, setLocalOptions] = useState(options);
   const inputRef = useRef(null);
 
   useEffect(() => setLocalOptions(options), [options]);
 
-  const selectedSet    = new Set(selected);
-  const filtered       = localOptions.filter((o) => o[labelKey].toLowerCase().includes(query.toLowerCase()));
-  const selectedItems  = filtered.filter((o) => selectedSet.has(o[valueKey]));
+  const selectedSet     = new Set(selected);
+  const filtered        = localOptions.filter((o) => String(o[labelKey]).toLowerCase().includes(query.toLowerCase()));
+  const selectedItems   = filtered.filter((o) => selectedSet.has(o[valueKey]));
   const unselectedItems = filtered.filter((o) => !selectedSet.has(o[valueKey]));
-  const exactMatch     = localOptions.some((o) => o[labelKey].toLowerCase() === query.toLowerCase());
+  const exactMatch      = localOptions.some((o) => String(o[labelKey]).toLowerCase() === query.toLowerCase());
+  const canCreate       = !!onCreate;
 
   const toggle = (val) => {
     if (selectedSet.has(val)) onChange(selected.filter((v) => v !== val));
     else onChange([...selected, val]);
   };
 
-  const createNew = () => {
+  const createNew = async () => {
     const trimmed = query.trim();
-    if (!trimmed) return;
-    const tempId  = `custom_${Date.now()}`;
-    const newOpt  = { [valueKey]: tempId, [labelKey]: trimmed };
-    setLocalOptions((prev) => [...prev, newOpt]);
-    onChange([...selected, tempId]);
-    setQuery('');
-    inputRef.current?.focus();
+    if (!trimmed || !onCreate) return;
+    try {
+      setCreating(true);
+      const created = await onCreate(trimmed); // must return { [valueKey], [labelKey] }
+      setLocalOptions((prev) => (prev.some((o) => o[valueKey] === created[valueKey]) ? prev : [...prev, created]));
+      onChange([...selected, created[valueKey]]);
+      setQuery('');
+      inputRef.current?.focus();
+    } catch (e) {
+      alert('Could not create: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setCreating(false);
+    }
   };
 
   const openModal = () => { setQuery(''); setOpen(true); setTimeout(() => inputRef.current?.focus(), 60); };
@@ -304,7 +397,7 @@ function MultiSelect({ label, options, selected, onChange, valueKey = 'id', labe
                   type="text"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && query && !exactMatch) createNew(); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && query && !exactMatch && canCreate) { e.preventDefault(); createNew(); } }}
                   placeholder={`Search ${label.toLowerCase()}…`}
                   className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 rounded-xl bg-gray-50 outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
                 />
@@ -337,18 +430,18 @@ function MultiSelect({ label, options, selected, onChange, valueKey = 'id', labe
                   {opt[labelKey]}
                 </button>
               ))}
-              {query && !exactMatch && (
-                <button type="button" onClick={createNew}
-                  className="w-full flex items-center gap-2 px-3 py-2.5 mt-1 rounded-xl text-sm text-gray-500 hover:text-blue-600 border-2 border-dashed border-gray-200 hover:border-blue-400 hover:bg-blue-50 transition-colors">
-                  <Plus className="w-3.5 h-3.5" />
-                  Create <span className="font-semibold ml-1">"{query}"</span>
+              {canCreate && query && !exactMatch && (
+                <button type="button" onClick={createNew} disabled={creating}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 mt-1 rounded-xl text-sm text-gray-500 hover:text-blue-600 border-2 border-dashed border-gray-200 hover:border-blue-400 hover:bg-blue-50 transition-colors disabled:opacity-50">
+                  {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                  Create <span className="font-semibold ml-1">&quot;{query}&quot;</span>
                 </button>
               )}
               {filtered.length === 0 && !query && (
                 <p className="text-center text-sm text-gray-400 py-8">No options available</p>
               )}
-              {filtered.length === 0 && query && (
-                <p className="text-center text-sm text-gray-400 py-6">No matches — press Enter or click below to create</p>
+              {filtered.length === 0 && query && !canCreate && (
+                <p className="text-center text-sm text-gray-400 py-6">No matches found</p>
               )}
             </div>
 
@@ -380,7 +473,90 @@ function MultiSelect({ label, options, selected, onChange, valueKey = 'id', labe
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OptionRow — FIX #5 (radio behavior) + FIX #6 (memo)
+// SourceYearPicker — pick sources, then attach an optional year to each.
+// value: [{ sourceId, yearId|null }]
+// ─────────────────────────────────────────────────────────────────────────────
+function SourceYearPicker({ sources, years, value, onChange, onCreateSource, onCreateYear }) {
+  const selectedIds = value.map((v) => v.sourceId);
+
+  const handleSourceIdsChange = (newIds) => {
+    const next = newIds.map((id) => value.find((v) => v.sourceId === id) || { sourceId: id, yearId: null });
+    onChange(next);
+  };
+
+  const setYear = (sourceId, yearId) =>
+    onChange(value.map((v) => (v.sourceId === sourceId ? { ...v, yearId: yearId || null } : v)));
+
+  const sourceName = (id) => sources.find((s) => s.id === id)?.name || '—';
+  const yearValue  = (id) => years.find((y) => y.id === id)?.value;
+
+  const addYearInline = async (sourceId) => {
+    const raw = window.prompt('Enter a year (e.g. 2024):');
+    if (!raw) return;
+    const num = parseInt(raw, 10);
+    if (!num || Number.isNaN(num)) { alert('Please enter a valid year.'); return; }
+    try {
+      const created = await onCreateYear(num);
+      setYear(sourceId, created.id);
+    } catch (e) {
+      alert('Could not add year: ' + (e.response?.data?.error || e.message));
+    }
+  };
+
+  return (
+    <div>
+      <MultiSelect
+        label="Sources"
+        options={sources}
+        selected={selectedIds}
+        onChange={handleSourceIdsChange}
+        onCreate={onCreateSource}
+      />
+
+      {value.length > 0 && (
+        <div className="mt-3 space-y-2">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+            Attach a year to each source (optional)
+          </p>
+          {value.map((v) => (
+            <div key={v.sourceId} className="flex items-center gap-3 p-2.5 bg-gray-50 border border-gray-200 rounded-xl">
+              <span className="text-sm font-medium text-gray-700 flex-1 truncate">{sourceName(v.sourceId)}</span>
+
+              {v.yearId && (
+                <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md shrink-0">
+                  {sourceName(v.sourceId)} ({yearValue(v.yearId)})
+                </span>
+              )}
+
+              <select
+                value={v.yearId || ''}
+                onChange={(e) => setYear(v.sourceId, e.target.value)}
+                className="px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg bg-white outline-none focus:ring-1 focus:ring-blue-400 shrink-0"
+              >
+                <option value="">No year</option>
+                {years.map((y) => <option key={y.id} value={y.id}>{y.value}</option>)}
+              </select>
+
+              {onCreateYear && (
+                <button
+                  type="button"
+                  onClick={() => addYearInline(v.sourceId)}
+                  title="Add a new year"
+                  className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-500 hover:text-blue-600 hover:border-blue-400 shrink-0"
+                >
+                  + Year
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OptionRow
 // ─────────────────────────────────────────────────────────────────────────────
 const OptionRow = memo(function OptionRow({ opt, index, onChange, onRemove, canRemove, onSelectCorrect }) {
   const letter = String.fromCharCode(65 + index);
@@ -391,7 +567,6 @@ const OptionRow = memo(function OptionRow({ opt, index, onChange, onRemove, canR
           {letter}
         </span>
         <span className="text-sm font-semibold text-gray-600 flex-1">Option {letter}</span>
-        {/* FIX #5 — radio (single correct) */}
         <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-500">
           <input
             type="radio"
@@ -439,7 +614,7 @@ const OptionRow = memo(function OptionRow({ opt, index, onChange, onRemove, canR
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SubQuestionEditor — FIX #6 (memo)
+// SubQuestionEditor
 // ─────────────────────────────────────────────────────────────────────────────
 const SubQuestionEditor = memo(function SubQuestionEditor({ sq, index, type, onChange, onRemove }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -447,7 +622,6 @@ const SubQuestionEditor = memo(function SubQuestionEditor({ sq, index, type, onC
   const addOption    = () => onChange({ ...sq, options: [...(sq.options || []), defaultOption()] });
   const removeOption = (i) => onChange({ ...sq, options: sq.options.filter((_, idx) => idx !== i) });
   const updateOption = (i, opt) => onChange({ ...sq, options: sq.options.map((o, idx) => idx === i ? opt : o) });
-  // FIX #5 applied inside cluster sub-questions too
   const selectCorrect = (i) => onChange({
     ...sq,
     options: sq.options.map((o, idx) => ({ ...o, isCorrect: idx === i })),
@@ -510,7 +684,7 @@ const SubQuestionEditor = memo(function SubQuestionEditor({ sq, index, type, onC
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WrittenPartEditor — FIX #6 (memo)
+// WrittenPartEditor
 // ─────────────────────────────────────────────────────────────────────────────
 const WrittenPartEditor = memo(function WrittenPartEditor({ part, index, onChange, onRemove, canRemove }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -625,9 +799,13 @@ export default function UploadQuestionPage() {
   const [difficulties, setDifficulties]           = useState([]);
   const [allTags, setAllTags]                     = useState([]);
   const [allSources, setAllSources]               = useState([]);
+  const [allUnits, setAllUnits]                   = useState([]);
+  const [allYears, setAllYears]                   = useState([]);
   const [allAcademicLevels, setAllAcademicLevels] = useState([]);
   const [selectedDifficulty, setSelectedDifficulty]         = useState('');
   const [selectedTags, setSelectedTags]                     = useState([]);
+  const [selectedUnits, setSelectedUnits]                   = useState([]);
+  // sources: [{ sourceId, yearId|null }]
   const [selectedSources, setSelectedSources]               = useState([]);
   const [selectedAcademicLevels, setSelectedAcademicLevels] = useState([]);
 
@@ -641,14 +819,16 @@ export default function UploadQuestionPage() {
   const [questionImages, setQuestionImages] = useState([]);
   const [answerText, setAnswerText]       = useState('');
   const [answerImages, setAnswerImages]   = useState([]);
-  // FIX #5 — radio: only one correct at a time
   const [options, setOptions] = useState([defaultOption(), defaultOption(), defaultOption(), defaultOption()]);
 
   // MCQ_CLUSTER
   const [subQuestions, setSubQuestions] = useState([defaultSubQ()]);
 
-  // FIX #2 — WRITTEN: single source of truth, no writtenPartCount
+  // WRITTEN
   const [writtenParts, setWrittenParts] = useState([defaultWrittenPart()]);
+
+  // Video links (optional, all types)
+  const [videoLinks, setVideoLinks] = useState([]);
 
   // Form state
   const [errors, setErrors]     = useState({});
@@ -664,24 +844,29 @@ export default function UploadQuestionPage() {
       api.get('/tags'),
       api.get('/sources'),
       api.get('/academic-levels'),
-    ]).then(([a, d, t, s, al]) => {
+      api.get('/units'),
+      api.get('/years'),
+    ]).then(([a, d, t, s, al, u, y]) => {
       setArchives(a.data);
       setDifficulties(d.data);
       setAllTags(t.data);
       setAllSources(s.data);
       setAllAcademicLevels(al.data);
+      setAllUnits(u.data);
+      setAllYears(y.data);
     }).catch(console.error);
   }, []);
 
-  // ── FIX #8 — Restore draft on mount ──
+  // ── Restore draft on mount ──
   useEffect(() => {
     const draft = loadDraft();
     if (!draft) return;
-    if (!window.confirm('A saved draft was found. Restore it?')) { clearDraft(); return; }
+    // if (!window.confirm('A saved draft was found. Restore it?')) { clearDraft(); return; }
     setQuestionType(draft.questionType ?? 'MCQ');
     setSelectedDifficulty(draft.selectedDifficulty ?? '');
     setSelectedTags(draft.selectedTags ?? []);
-    setSelectedSources(draft.selectedSources ?? []);
+    setSelectedUnits(draft.selectedUnits ?? []);
+    setSelectedSources(normalizeSelectedSources(draft.selectedSources));
     setSelectedAcademicLevels(draft.selectedAcademicLevels ?? []);
     setStemEnabled(draft.stemEnabled ?? false);
     setStemText(draft.stemText ?? '');
@@ -693,22 +878,23 @@ export default function UploadQuestionPage() {
     setOptions(draft.options ?? [defaultOption(), defaultOption(), defaultOption(), defaultOption()]);
     setSubQuestions(draft.subQuestions ?? [defaultSubQ()]);
     setWrittenParts(draft.writtenParts ?? [defaultWrittenPart()]);
+    setVideoLinks(draft.videoLinks ?? []);
     setDraftRestored(true);
   }, []);
 
-  // ── FIX #8 — Auto-save draft whenever relevant state changes ──
+  // ── Auto-save draft ──
   useEffect(() => {
     saveDraft({
-      questionType, selectedDifficulty, selectedTags, selectedSources, selectedAcademicLevels,
+      questionType, selectedDifficulty, selectedTags, selectedUnits, selectedSources, selectedAcademicLevels,
       stemEnabled, stemText, stemImages,
       questionText, questionImages, answerText, answerImages,
-      options, subQuestions, writtenParts,
+      options, subQuestions, writtenParts, videoLinks,
     });
   }, [
-    questionType, selectedDifficulty, selectedTags, selectedSources, selectedAcademicLevels,
+    questionType, selectedDifficulty, selectedTags, selectedUnits, selectedSources, selectedAcademicLevels,
     stemEnabled, stemText, stemImages,
     questionText, questionImages, answerText, answerImages,
-    options, subQuestions, writtenParts,
+    options, subQuestions, writtenParts, videoLinks,
   ]);
 
   useEffect(() => {
@@ -724,7 +910,7 @@ export default function UploadQuestionPage() {
     setSelectedTopic('');
   }, [selectedChapter]);
 
-  // Reset content on type change (keep metadata)
+  // Reset CONTENT on type change (keep metadata + video links)
   useEffect(() => {
     setSubQuestions([defaultSubQ()]);
     setOptions([defaultOption(), defaultOption(), defaultOption(), defaultOption()]);
@@ -738,8 +924,36 @@ export default function UploadQuestionPage() {
     setAnswerImages([]);
   }, [questionType]);
 
-  // ── FIX #2 — written parts: single source of truth helpers ──
-  // Derived count — never stored separately
+  // ── Inline-create handlers (persist to backend, update master lists) ──
+  const handleCreateTag = useCallback(async (name) => {
+    const res = await api.post('/tags', { name });
+    setAllTags((prev) => [...prev, res.data]);
+    return res.data;
+  }, []);
+
+  const handleCreateUnit = useCallback(async (name) => {
+    const res = await api.post('/units', { name });
+    setAllUnits((prev) => [...prev, res.data]);
+    return res.data;
+  }, []);
+
+  const handleCreateSource = useCallback(async (name) => {
+    const res = await api.post('/sources', { name });
+    setAllSources((prev) => [...prev, res.data]);
+    return res.data;
+  }, []);
+
+  const handleCreateYear = useCallback(async (value) => {
+    const res = await api.post('/years', { value });
+    setAllYears((prev) => {
+      const exists = prev.some((y) => y.id === res.data.id);
+      const next = exists ? prev : [...prev, res.data];
+      return next.sort((a, b) => b.value - a.value);
+    });
+    return res.data;
+  }, []);
+
+  // ── written parts helpers ──
   const partCount = writtenParts.length;
 
   const setPartCount = useCallback((raw) => {
@@ -762,8 +976,6 @@ export default function UploadQuestionPage() {
   const addOption    = useCallback(() => setOptions((o) => [...o, defaultOption()]), []);
   const removeOption = useCallback((i) => setOptions((o) => o.filter((_, idx) => idx !== i)), []);
   const updateOption = useCallback((i, opt) => setOptions((o) => o.map((x, idx) => idx === i ? opt : x)), []);
-
-  // FIX #5 — radio: mark only one correct
   const selectCorrectOption = useCallback((i) =>
     setOptions((prev) => prev.map((o, idx) => ({ ...o, isCorrect: idx === i }))), []);
 
@@ -772,7 +984,7 @@ export default function UploadQuestionPage() {
   const removeSubQuestion = useCallback((i) => setSubQuestions((s) => s.filter((_, idx) => idx !== i)), []);
   const updateSubQuestion = useCallback((i, sq) => setSubQuestions((s) => s.map((x, idx) => idx === i ? sq : x)), []);
 
-  // ── FIX #1 — Validation (clean MCQ_CLUSTER stem rule) ──
+  // ── Validation ──
   const validate = () => {
     const e = {};
     if (!selectedTopic) e.topic = 'Please select a topic';
@@ -788,7 +1000,6 @@ export default function UploadQuestionPage() {
     }
 
     if (questionType === 'MCQ_CLUSTER') {
-      // FIX #1 — stem is always required for cluster; no stemEnabled check
       if (!stemText.trim() && stemImages.length === 0)
         e.stem = 'Stem is required for Cluster MCQ';
       if (subQuestions.length === 0) e.subQuestions = 'At least one sub-question required';
@@ -809,7 +1020,7 @@ export default function UploadQuestionPage() {
     return Object.keys(e).length === 0;
   };
 
-  // ── FIX #7 — Submit with cleanPayload ──
+  // ── Submit ──
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
@@ -823,10 +1034,22 @@ export default function UploadQuestionPage() {
         difficultyId:   selectedDifficulty || undefined,
         academicLevels: selectedAcademicLevels,
         tags:           selectedTags,
-        sources:        selectedSources,
+        units:          selectedUnits,
+        // sources carry an optional per-source year
+        sources:        selectedSources.map((s) => ({ sourceId: s.sourceId, yearId: s.yearId || undefined })),
       };
 
-      // Stem — included if has content (regardless of stemEnabled for MCQ_CLUSTER)
+      // Video links (optional, all types)
+      const cleanVideos = videoLinks.filter((v) => v.url && v.url.trim());
+      if (cleanVideos.length > 0) {
+        payload.videoLinks = cleanVideos.map((v) => ({
+          url:      v.url.trim(),
+          label:    v.label?.trim() || undefined,
+          platform: detectPlatform(v.url),
+        }));
+      }
+
+      // Stem
       if (stemText || stemImages.length > 0) {
         payload.stemText   = stemText || undefined;
         payload.stemImages = stemImages.length > 0 ? toStorable(stemImages) : undefined;
@@ -873,7 +1096,6 @@ export default function UploadQuestionPage() {
         }
       }
 
-      // FIX #7 — strip all undefined/null before sending
       await api.post('/questions', cleanPayload(payload));
       clearDraft();
       setSuccess(true);
@@ -986,14 +1208,23 @@ export default function UploadQuestionPage() {
           </div>
 
           <div className="grid md:grid-cols-2 gap-4">
-            <MultiSelect label="Tags"    options={allTags}    selected={selectedTags}    onChange={setSelectedTags} />
-            <MultiSelect label="Sources" options={allSources} selected={selectedSources} onChange={setSelectedSources} />
+            <MultiSelect label="Tags"  options={allTags}  selected={selectedTags}  onChange={setSelectedTags}  onCreate={handleCreateTag} />
+            <MultiSelect label="Units" options={allUnits} selected={selectedUnits} onChange={setSelectedUnits} onCreate={handleCreateUnit} />
           </div>
+
+          {/* Sources + per-source Year (full width — has expandable rows) */}
+          <SourceYearPicker
+            sources={allSources}
+            years={allYears}
+            value={selectedSources}
+            onChange={setSelectedSources}
+            onCreateSource={handleCreateSource}
+            onCreateYear={handleCreateYear}
+          />
         </Section>
 
         {/* 3. Stem */}
         <Section title="3. Stem" accent="amber">
-          {/* FIX #1 — MCQ_CLUSTER: stem is mandatory, show a clear message instead of toggle */}
           {questionType === 'MCQ_CLUSTER' ? (
             <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
               A stem (shared passage / context) is <strong>required</strong> for Cluster MCQ questions.
@@ -1007,7 +1238,6 @@ export default function UploadQuestionPage() {
             />
           )}
 
-          {/* Show stem editor when: MCQ_CLUSTER (always) or other types with toggle on */}
           {(questionType === 'MCQ_CLUSTER' || stemEnabled) && (
             <div className="mt-1 animate-in fade-in slide-in-from-top-1 duration-200">
               <RichField
@@ -1129,7 +1359,6 @@ export default function UploadQuestionPage() {
               />
             </Section>
 
-            {/* FIX #2 — partCount is derived from writtenParts.length */}
             <Section
               title="6. Parts"
               accent="amber"
@@ -1174,6 +1403,14 @@ export default function UploadQuestionPage() {
             </Section>
           </>
         )}
+
+        {/* Video Links — optional, all types */}
+        <Section title="Video Links" accent="violet">
+          <p className="text-xs text-gray-400 -mt-2">
+            Optional. Attach solution or explainer videos (YouTube, Vimeo, etc.). Works for any question type.
+          </p>
+          <VideoLinksEditor links={videoLinks} onChange={setVideoLinks} />
+        </Section>
 
         {/* Submit */}
         <div className="flex items-center gap-4 pt-2">

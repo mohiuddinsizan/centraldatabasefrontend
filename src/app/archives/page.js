@@ -447,12 +447,12 @@ export default function ManageArchivesPage() {
 
                       {/* Chapter deleting button invisible */}
 
-                      {/* <button
+                      <button
                         onClick={(e) => { e.stopPropagation(); handleDeleteChapter(ch.id); }}
                         className="p-3 hover:bg-white rounded-xl text-red-600"
                       >
                         <Trash2 className="w-5 h-5" />
-                      </button> */}
+                      </button>
 
 
 
@@ -491,9 +491,9 @@ export default function ManageArchivesPage() {
                       {/* Topic deleting button invisible */}
 
 
-                      {/* <button onClick={() => handleDeleteTopic(t.id)} className="p-3 hover:bg-gray-100 rounded-xl text-red-600">
+                      <button onClick={() => handleDeleteTopic(t.id)} className="p-3 hover:bg-gray-100 rounded-xl text-red-600">
                         <Trash2 className="w-5 h-5" />
-                      </button> */}
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -627,7 +627,7 @@ function ArchiveCard({ archive, color, onEdit, onDelete, onManage }) {
 
           {/* Archive deleting button invisible */}
 
-          {/* <button onClick={(e) => { e.stopPropagation(); onDelete(archive.id); }} className="bg-white p-2 rounded-lg text-red-600"><Trash2 className="w-4 h-4" /></button> */}
+          <button onClick={(e) => { e.stopPropagation(); onDelete(archive.id); }} className="bg-white p-2 rounded-lg text-red-600"><Trash2 className="w-4 h-4" /></button>
         </div>
 
         {archive.chapter_count > 0 && (
